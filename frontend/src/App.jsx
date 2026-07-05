@@ -4,7 +4,7 @@ import { unlockPrivateKey, signChallenge, hasLocalIdentity } from "./cryptoUtils
 import SignUp from "./SignUp";
 import "./App.css";
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "";
 
 export default function IndexPage() {
   const [view, setView] = useState("login"); // "login" | "signup"
