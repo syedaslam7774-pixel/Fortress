@@ -640,7 +640,7 @@ def route_refresh(data: RefreshRequest, request: Request, db=Depends(get_db)):
 
 
 @auth_router.post("/logout", status_code=204)
-def route_logout(data: LogoutRequest, db=Depends(get_db)):
+def route_logout(data: LogoutRequest, request: Request, db=Depends(get_db)):
     logout_user(db, data.refresh_token)
     return None
 
