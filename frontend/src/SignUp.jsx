@@ -39,7 +39,7 @@ export default function SignUp({ onDone, onBackToLogin }) {
       const res = await fetch(`${API_BASE}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, publicKey }),
+        body: JSON.stringify({ email: username, publicKey }),
       });
 
       if (!res.ok) {
@@ -93,7 +93,7 @@ export default function SignUp({ onDone, onBackToLogin }) {
               <form onSubmit={handleCreate}>
                 <input
                   type="text"
-                  placeholder="Choose a username"
+                  placeholder="Choose your email"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="portal-input"
