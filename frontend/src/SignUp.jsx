@@ -43,13 +43,18 @@ export default function SignUp({ onDone, onBackToLogin }) {
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        let msg = body.error || "Failed to create account.";
-        if(typeof body.error === "string"){
-          message = body.detail;
-        }else if(Array.isArray(body.detail)){
-          message = body.detail.map((d) => d.msg).join(" ");
-        }throw new Error(message);
+       {
+  const body = await res.json().catch(() => ({}));
+  let message = "Failed to create account.";
+  if (typeof body.detail === "string") {
+    message = body.detail;
+  } else if (Array.isArray(body.detail)) {
+    message = body.detail.map((d) => d.msg).join(" ");
+  } else if (typeof body.error === "string") {
+    message = body.error;
+  }
+  throw new Error(message);
+}
       }
 
       setCreated(true);
