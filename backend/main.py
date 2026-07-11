@@ -22,7 +22,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = None
 init_error = None
 try:
-    from supabase import create_client
+    import importlib
+    supabase_module = importlib.import_module("supabase")
+    create_client = supabase_module.create_client
     if not SUPABASE_URL or not SUPABASE_KEY:
         init_error = "Missing SUPABASE_URL or SUPABASE_KEY environment variable in Vercel."
     else:
