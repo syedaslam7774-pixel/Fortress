@@ -640,13 +640,13 @@ def route_refresh(data: RefreshRequest, request: Request, db=Depends(get_db)):
 
 
 @auth_router.post("/logout", status_code=204)
-def route_logout(data: LogoutRequest, db=Depends(get_db)):
+def route_logout(data: LogoutRequest, request: Request, db=Depends(get_db)):
     logout_user(db, data.refresh_token)
     return None
 
 
 @auth_router.post("/verify-email", status_code=204)
-def route_verify_email(data: VerifyEmailRequest, db=Depends(get_db)):
+def route_verify_email(data: VerifyEmailRequest, request: Request, db=Depends(get_db)):
     verify_email(db, data.token)
     return None
 
@@ -658,7 +658,7 @@ def route_forgot_password(data: ForgotPasswordRequest, request: Request, db=Depe
 
 
 @auth_router.post("/reset-password", status_code=204)
-def route_reset_password(data: ResetPasswordRequest, db=Depends(get_db)):
+def route_reset_password(data: ResetPasswordRequest, request: Request, db=Depends(get_db)):
     reset_password(db, data.token, data.new_password)
     return None
 
