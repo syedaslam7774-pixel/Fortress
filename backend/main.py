@@ -1,3 +1,4 @@
+
 """
 ================================================================================
  FORTRESS API — single-file backend (FastAPI + Supabase)
@@ -29,12 +30,22 @@ variable in the list below for Production (and Preview, if used), then
 REDEPLOY. Env vars only take effect on deployments made after you save them.
 
 Required env vars:
-    SUPABASE_URL           your Supabase project URL
-    SUPABASE_KEY            Supabase service role or anon key
-    JWT_SECRET               secret for signing access tokens
-    JWT_REFRESH_SECRET       separate secret for refresh tokens
-    FRONTEND_URL             used to build verification/reset links
-    ALLOWED_ORIGINS          comma-separated CORS origins, or "*"
+    SUPABASE_URL              your Supabase project URL
+    SUPABASE_KEY              Supabase service role or anon key
+    JWT_ACCESS_PRIVATE_KEY    RSA private key (PEM), signs access tokens
+    JWT_ACCESS_PUBLIC_KEY     RSA public key (PEM), verifies access tokens
+    JWT_REFRESH_PRIVATE_KEY   RSA private key (PEM), signs refresh tokens
+    JWT_REFRESH_PUBLIC_KEY    RSA public key (PEM), verifies refresh tokens
+    FRONTEND_URL              used to build verification/reset links
+    ALLOWED_ORIGINS           comma-separated CORS origins, or "*"
+
+Generate each key pair once (locally, not on the server) with:
+    openssl genrsa -out private.pem 2048
+    openssl rsa -in private.pem -pubout -out public.pem
+Then paste each PEM's contents into the matching env var with literal
+"\n" in place of real newlines (Settings un-escapes them at load time).
+Requires the "cryptography" package installed alongside python-jose,
+since RS256 needs it as jose's crypto backend.
 
 Optional (without these, emails are logged instead of actually sent):
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM
@@ -63,6 +74,8 @@ from typing import Optional
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from fastapi.dependencies.utils import get_dependant
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, field_validator
 from jose import jwt, JWTError
@@ -83,10 +96,15 @@ class Settings:
     SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.environ.get("SUPABASE_KEY", "")
 
-    # --- JWT ---
-    JWT_SECRET: str = os.environ.get("JWT_SECRET", "")
-    JWT_REFRESH_SECRET: str = os.environ.get("JWT_REFRESH_SECRET", "")
-    JWT_ALGORITHM: str = os.environ.get("JWT_ALGORITHM", "HS256")
+    # --- JWT (RS256: private key signs, public key verifies) ---
+    # PEM values are read from env vars. Most hosts don't support real
+    # newlines in env vars, so keys are stored with literal "\n" and
+    # un-escaped here.
+    JWT_ALGORITHM: str = os.environ.get("JWT_ALGORITHM", "RS256")
+    JWT_ACCESS_PRIVATE_KEY: str = os.environ.get("JWT_ACCESS_PRIVATE_KEY", "").replace("\\n", "\n")
+    JWT_ACCESS_PUBLIC_KEY: str = os.environ.get("JWT_ACCESS_PUBLIC_KEY", "").replace("\\n", "\n")
+    JWT_REFRESH_PRIVATE_KEY: str = os.environ.get("JWT_REFRESH_PRIVATE_KEY", "").replace("\\n", "\n")
+    JWT_REFRESH_PUBLIC_KEY: str = os.environ.get("JWT_REFRESH_PUBLIC_KEY", "").replace("\\n", "\n")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
@@ -117,10 +135,14 @@ class Settings:
             problems.append("SUPABASE_URL is not set.")
         if not self.SUPABASE_KEY:
             problems.append("SUPABASE_KEY is not set.")
-        if not self.JWT_SECRET:
-            problems.append("JWT_SECRET is not set.")
-        if not self.JWT_REFRESH_SECRET:
-            problems.append("JWT_REFRESH_SECRET is not set.")
+        if not self.JWT_ACCESS_PRIVATE_KEY:
+            problems.append("JWT_ACCESS_PRIVATE_KEY is not set.")
+        if not self.JWT_ACCESS_PUBLIC_KEY:
+            problems.append("JWT_ACCESS_PUBLIC_KEY is not set.")
+        if not self.JWT_REFRESH_PRIVATE_KEY:
+            problems.append("JWT_REFRESH_PRIVATE_KEY is not set.")
+        if not self.JWT_REFRESH_PUBLIC_KEY:
+            problems.append("JWT_REFRESH_PUBLIC_KEY is not set.")
         return problems
 
 
@@ -173,32 +195,36 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def _encode_jwt(payload: dict, secret: str, expires_delta: timedelta) -> str:
+def _encode_jwt(payload: dict, private_key: str, expires_delta: timedelta) -> str:
+    """Sign with the RSA private key. Only holders of the private key can mint tokens."""
     to_encode = payload.copy()
     now = datetime.now(timezone.utc)
     to_encode.update({"iat": now, "exp": now + expires_delta, "jti": str(uuid.uuid4())})
-    return jwt.encode(to_encode, secret, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(to_encode, private_key, algorithm=settings.JWT_ALGORITHM)
 
 
 def create_access_token(subject: str, role: str) -> str:
     payload = {"sub": subject, "role": role, "type": "access"}
-    return _encode_jwt(payload, settings.JWT_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    return _encode_jwt(payload, settings.JWT_ACCESS_PRIVATE_KEY,
+                        timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
 
 
 def create_refresh_token(subject: str) -> str:
     payload = {"sub": subject, "type": "refresh"}
-    return _encode_jwt(payload, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+    return _encode_jwt(payload, settings.JWT_REFRESH_PRIVATE_KEY,
+                        timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
 
 
 def decode_access_token(token: str) -> dict:
-    payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    """Verify with the RSA public key. Anyone with the public key can verify, not mint."""
+    payload = jwt.decode(token, settings.JWT_ACCESS_PUBLIC_KEY, algorithms=[settings.JWT_ALGORITHM])
     if payload.get("type") != "access":
         raise JWTError("Not an access token.")
     return payload
 
 
 def decode_refresh_token(token: str) -> dict:
-    payload = jwt.decode(token, settings.JWT_REFRESH_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    payload = jwt.decode(token, settings.JWT_REFRESH_PUBLIC_KEY, algorithms=[settings.JWT_ALGORITHM])
     if payload.get("type") != "refresh":
         raise JWTError("Not a refresh token.")
     return payload
@@ -731,8 +757,16 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 
 # --- Tighter rate limit on auth endpoints (credential stuffing protection) ---
+# NOTE: limiter.shared_limit(...) returns a plain decorator function, not a
+# Depends(...) object — it cannot be appended to route.dependencies (that
+# list must only contain Depends instances, each with a .dependency
+# attribute). Doing so crashed route registration at startup with:
+#   AttributeError: 'function' object has no attribute 'dependency'
+# Fix: wrap each endpoint's callable directly and rebuild its dependant.
 for _route in auth_router.routes:
-    _route.dependencies.append(limiter.shared_limit(settings.RATE_LIMIT_AUTH, scope="auth"))
+    if isinstance(_route, APIRoute):
+        _route.endpoint = limiter.shared_limit(settings.RATE_LIMIT_AUTH, scope="auth")(_route.endpoint)
+        _route.dependant = get_dependant(path=_route.path_format, call=_route.endpoint)
 
 app.include_router(auth_router)
 app.include_router(user_router)
@@ -809,3 +843,4 @@ create table if not exists audit_logs (
 create index if not exists idx_sessions_user_id on sessions(user_id);
 create index if not exists idx_audit_logs_user_id on audit_logs(user_id);
 """
+
