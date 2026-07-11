@@ -36,10 +36,10 @@ export default function SignUp({ onDone, onBackToLogin }) {
       const { publicKey } = await createIdentity(username, password);
 
       // 2. Only the public key is sent to the server
-      const res = await fetch(`${API_BASE}/api/register`, {
+      const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: username, publicKey }),
+        body: JSON.stringify({ email: username, password }),
       });
 
       if (!res.ok) {
