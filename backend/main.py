@@ -1,4 +1,3 @@
-
 """
 ================================================================================
  FORTRESS API — single-file backend (FastAPI + Supabase)
@@ -32,20 +31,14 @@ REDEPLOY. Env vars only take effect on deployments made after you save them.
 Required env vars:
     SUPABASE_URL              your Supabase project URL
     SUPABASE_KEY              Supabase service role or anon key
-    JWT_ACCESS_PRIVATE_KEY    RSA private key (PEM), signs access tokens
-    JWT_ACCESS_PUBLIC_KEY     RSA public key (PEM), verifies access tokens
-    JWT_REFRESH_PRIVATE_KEY   RSA private key (PEM), signs refresh tokens
-    JWT_REFRESH_PUBLIC_KEY    RSA public key (PEM), verifies refresh tokens
+    JWT_SECRET                random string, signs + verifies access tokens (HS256)
+    JWT_REFRESH_SECRET        random string, signs + verifies refresh tokens (HS256)
     FRONTEND_URL              used to build verification/reset links
     ALLOWED_ORIGINS           comma-separated CORS origins, or "*"
 
-Generate each key pair once (locally, not on the server) with:
-    openssl genrsa -out private.pem 2048
-    openssl rsa -in private.pem -pubout -out public.pem
-Then paste each PEM's contents into the matching env var with literal
-"\n" in place of real newlines (Settings un-escapes them at load time).
-Requires the "cryptography" package installed alongside python-jose,
-since RS256 needs it as jose's crypto backend.
+JWT_SECRET and JWT_REFRESH_SECRET can be any long random string (e.g. output
+of `openssl rand -hex 32`). Keep them secret — anyone with JWT_SECRET can
+mint valid access tokens for any user.
 
 Optional (without these, emails are logged instead of actually sent):
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM
@@ -100,11 +93,9 @@ class Settings:
     # PEM values are read from env vars. Most hosts don't support real
     # newlines in env vars, so keys are stored with literal "\n" and
     # un-escaped here.
-    JWT_ALGORITHM: str = os.environ.get("JWT_ALGORITHM", "RS256")
-    JWT_ACCESS_PRIVATE_KEY: str = os.environ.get("JWT_ACCESS_PRIVATE_KEY", "").replace("\\n", "\n")
-    JWT_ACCESS_PUBLIC_KEY: str = os.environ.get("JWT_ACCESS_PUBLIC_KEY", "").replace("\\n", "\n")
-    JWT_REFRESH_PRIVATE_KEY: str = os.environ.get("JWT_REFRESH_PRIVATE_KEY", "").replace("\\n", "\n")
-    JWT_REFRESH_PUBLIC_KEY: str = os.environ.get("JWT_REFRESH_PUBLIC_KEY", "").replace("\\n", "\n")
+    JWT_ALGORITHM: str = os.environ.get("JWT_ALGORITHM", "HS256")
+    JWT_SECRET: str = os.environ.get("JWT_SECRET", "")
+    JWT_REFRESH_SECRET: str = os.environ.get("JWT_REFRESH_SECRET", "")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
@@ -135,14 +126,10 @@ class Settings:
             problems.append("SUPABASE_URL is not set.")
         if not self.SUPABASE_KEY:
             problems.append("SUPABASE_KEY is not set.")
-        if not self.JWT_ACCESS_PRIVATE_KEY:
-            problems.append("JWT_ACCESS_PRIVATE_KEY is not set.")
-        if not self.JWT_ACCESS_PUBLIC_KEY:
-            problems.append("JWT_ACCESS_PUBLIC_KEY is not set.")
-        if not self.JWT_REFRESH_PRIVATE_KEY:
-            problems.append("JWT_REFRESH_PRIVATE_KEY is not set.")
-        if not self.JWT_REFRESH_PUBLIC_KEY:
-            problems.append("JWT_REFRESH_PUBLIC_KEY is not set.")
+        if not self.JWT_SECRET:
+            problems.append("JWT_SECRET is not set.")
+        if not self.JWT_REFRESH_SECRET:
+            problems.append("JWT_REFRESH_SECRET is not set.")
         return problems
 
 
@@ -205,26 +192,25 @@ def _encode_jwt(payload: dict, private_key: str, expires_delta: timedelta) -> st
 
 def create_access_token(subject: str, role: str) -> str:
     payload = {"sub": subject, "role": role, "type": "access"}
-    return _encode_jwt(payload, settings.JWT_ACCESS_PRIVATE_KEY,
+    return _encode_jwt(payload, settings.JWT_SECRET,
                         timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
 
 
 def create_refresh_token(subject: str) -> str:
     payload = {"sub": subject, "type": "refresh"}
-    return _encode_jwt(payload, settings.JWT_REFRESH_PRIVATE_KEY,
+    return _encode_jwt(payload, settings.JWT_REFRESH_SECRET,
                         timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
 
 
 def decode_access_token(token: str) -> dict:
-    """Verify with the RSA public key. Anyone with the public key can verify, not mint."""
-    payload = jwt.decode(token, settings.JWT_ACCESS_PUBLIC_KEY, algorithms=[settings.JWT_ALGORITHM])
+    payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     if payload.get("type") != "access":
         raise JWTError("Not an access token.")
     return payload
 
 
 def decode_refresh_token(token: str) -> dict:
-    payload = jwt.decode(token, settings.JWT_REFRESH_PUBLIC_KEY, algorithms=[settings.JWT_ALGORITHM])
+    payload = jwt.decode(token, settings.JWT_REFRESH_SECRET, algorithms=[settings.JWT_ALGORITHM])
     if payload.get("type") != "refresh":
         raise JWTError("Not a refresh token.")
     return payload
