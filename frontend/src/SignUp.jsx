@@ -47,7 +47,7 @@ export default function SignUp({ onDone, onBackToLogin }) {
         let msg = body.error || "Failed to create account.";
         if(typeof body.error === "string"){
           message = body.detail;
-        }else if(array.isArray(isbody.detail)){
+        }else if(Array.isArray(body.detail)){
           message = body.detail.map((d) => d.msg).join(" ");
         }throw new Error(message);
       }
