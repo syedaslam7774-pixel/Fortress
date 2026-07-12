@@ -5,7 +5,7 @@ import "./App.css";
 
 const API_BASE = "";
 
-export default function SignUp({ onDone, onBackToLogin }) {
+export default function SignUp({ onBackToLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -32,28 +32,25 @@ export default function SignUp({ onDone, onBackToLogin }) {
 
     setLoading(true);
     try {
-      // 1. Generate key pair + encrypt private key with password, entirely in-browser.
-      //    The private key never leaves this device — only the public key is sent below.
       const { publicKey } = await createIdentity(username, password);
 
-      // 2. Send email + password + public key to the server.
-      const res = await fetch(`${API_BASE}/api/auth/register`, {
+      const res = await fetch(`${API_BASE}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: username, password, public_key: publicKey }),
+        body: JSON.stringify({ username, publicKey }),
       });
 
+      const rawText = await res.text();
+      let body = {};
+      try {
+        body = JSON.parse(rawText);
+      } catch {
+        // Response wasn't JSON at all - show the raw text so we can see what happened
+        throw new Error(`Server returned non-JSON response: ${rawText.slice(0, 200)}`);
+      }
+
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        let message = "Failed to create account.";
-        if (typeof body.detail === "string") {
-          message = body.detail;
-        } else if (Array.isArray(body.detail)) {
-          message = body.detail.map((d) => d.msg).join(" ");
-        } else if (typeof body.error === "string") {
-          message = body.error;
-        }
-        throw new Error(message);
+        throw new Error(body.detail || "Registration failed.");
       }
 
       setCreated(true);
@@ -90,8 +87,7 @@ export default function SignUp({ onDone, onBackToLogin }) {
               <div className="result-title text-green">YOUR ACCOUNT IS CREATED</div>
               <div className="result-sub">
                 Your private key is encrypted and stored only on this device.
-                It never leaves your browser. Logging in from a different
-                device or browser will require creating a new identity there.
+                It never leaves your browser.
               </div>
               <button className="secondary-btn" onClick={onBackToLogin}>
                 GO TO LOGIN
@@ -103,7 +99,7 @@ export default function SignUp({ onDone, onBackToLogin }) {
               <form onSubmit={handleCreate}>
                 <input
                   type="text"
-                  placeholder="Choose your email"
+                  placeholder="Choose a username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="portal-input"

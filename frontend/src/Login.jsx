@@ -1,132 +1,110 @@
 import React, { useState } from "react";
-import { Shield, LogIn, AlertCircle } from "lucide-react";
-import { unlockPrivateKey, signChallenge } from "./cryptoUtils";
+import { Shield, ShieldCheck, ShieldX, KeyRound, HelpCircle, Fingerprint } from "lucide-react";
 import "./App.css";
 
-const API_BASE = "";
+const VALID_USER = "admin";
+const VALID_PASS = "fortress123";
 
-export default function Login({ onDone, onBackToSignUp }) {
+export default function App() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState("idle"); // idle | scanning | granted | denied
 
-  const handleLogin = async (e) => {
+  const handleAuthenticate = (e) => {
     e.preventDefault();
-    setError("");
+    if (!username || !password) return;
+    setStatus("scanning");
+    setTimeout(() => {
+      const ok = username === VALID_USER && password === VALID_PASS;
+      setStatus(ok ? "granted" : "denied");
+    }, 1100);
+  };
 
-    if (!username || !password) {
-      setError("Email and password are required.");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // 1. Unlock the locally-stored private key with the password.
-      //    This throws if the password is wrong, or if no identity for this
-      //    email was ever created on this specific device/browser.
-      const privateKey = await unlockPrivateKey(username, password);
-
-      // 2. Ask the server for a fresh, one-time challenge tied to this account.
-      const challengeRes = await fetch(`${API_BASE}/api/auth/challenge`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: username }),
-      });
-      if (!challengeRes.ok) {
-        const body = await challengeRes.json().catch(() => ({}));
-        throw new Error(body.detail || "Could not start login.");
-      }
-      const { challenge_id, challenge } = await challengeRes.json();
-
-      // 3. Sign the challenge locally. The private key never leaves the browser.
-      const signature = await signChallenge(privateKey, challenge);
-
-      // 4. Send the signature back — the server verifies it against the
-      //    public key it stored at registration, and issues tokens.
-      const verifyRes = await fetch(`${API_BASE}/api/auth/challenge/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: username, challenge_id, signature }),
-      });
-      if (!verifyRes.ok) {
-        const body = await verifyRes.json().catch(() => ({}));
-        throw new Error(body.detail || "Login failed.");
-      }
-      const tokens = await verifyRes.json();
-
-      localStorage.setItem("fortress_access_token", tokens.access_token);
-      localStorage.setItem("fortress_refresh_token", tokens.refresh_token);
-
-      onDone && onDone(tokens);
-    } catch (err) {
-      if (err.message && err.message.includes("No local identity found")) {
-        setError(
-          "No identity found for this email on this device. " +
-          "Your private key only lives on the device you created it on."
-        );
-      } else {
-        setError(err.message || "Something went wrong.");
-      }
-    } finally {
-      setLoading(false);
-    }
+  const reset = () => {
+    setStatus("idle");
+    setPassword("");
   };
 
   return (
     <div className="portal-bg">
-      <div className="grid-overlay" />
-      <div className="portal-card">
-        <div className="corner corner-tl" />
-        <div className="corner corner-tr" />
-        <div className="corner corner-bl" />
-        <div className="corner corner-br" />
-
+      <div className={`portal-card ${status === "granted" ? "glow-green" : status === "denied" ? "glow-red" : ""}`}>
         <div className="portal-header">
           <Shield size={30} className="header-icon" strokeWidth={2} />
           <div>
             <div className="brand">
               <span className="brand-bold">FORTRESS</span> SECURITY
             </div>
-            <div className="brand-sub">VERIFY IDENTITY</div>
+            <div className="brand-sub">ACCESS PORTAL</div>
           </div>
         </div>
 
         <div className="portal-body">
-          <div className="section-label">SIGN A CHALLENGE WITH YOUR KEY</div>
-          <form onSubmit={handleLogin}>
-            <input
-              type="text"
-              placeholder="Your email"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="portal-input"
-              autoComplete="off"
-            />
-            <input
-              type="password"
-              placeholder="Your password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="portal-input"
-            />
-            <button type="submit" className="authenticate-btn" disabled={loading}>
-              <span className="btn-shine" />
-              {loading ? "VERIFYING…" : "LOG IN"} <LogIn size={18} />
-            </button>
-          </form>
+          {status === "idle" && (
+            <>
+              <div className="section-label">BIOMETRIC &amp; CREDENTIAL VERIFICATION</div>
+              <form onSubmit={handleAuthenticate}>
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="portal-input"
+                  autoComplete="off"
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="portal-input"
+                />
+                <button type="submit" className="authenticate-btn">
+                  AUTHENTICATE <KeyRound size={18} />
+                </button>
+              </form>
+              <div className="trouble-link">
+                <a href="#trouble" onClick={(e) => e.preventDefault()}>
+                  Having trouble?
+                </a>{" "}
+                <HelpCircle size={13} />
+              </div>
+              <div className="hint">demo: admin / fortress123</div>
+            </>
+          )}
 
-          {error && (
-            <div className="error-msg anim-in">
-              <AlertCircle size={14} /> {error}
+          {status === "scanning" && (
+            <div className="result-state">
+              <div className="scan-ring">
+                <Fingerprint size={48} className="scan-icon" />
+              </div>
+              <div className="scan-text">VERIFYING CREDENTIALS…</div>
+              <div className="scan-bar">
+                <div className="scan-bar-fill" />
+              </div>
             </div>
           )}
 
-          <div className="trouble-link">
-            <a href="#signup" onClick={(e) => { e.preventDefault(); onBackToSignUp(); }}>
-              Need an account? Create identity
-            </a>
-          </div>
+          {status === "granted" && (
+            <div className="result-state">
+              <ShieldCheck size={64} className="result-icon icon-green" />
+              <div className="result-title text-green">ACCESS GRANTED</div>
+              <div className="result-sub">Welcome back, {username}.</div>
+              <button className="secondary-btn" onClick={reset}>
+                LOCK &amp; RETURN
+              </button>
+            </div>
+          )}
+
+          {status === "denied" && (
+            <div className="result-state">
+              <ShieldX size={64} className="result-icon icon-red" />
+              <div className="result-title text-red">ACCESS DENIED</div>
+              <div className="result-sub">Invalid username or password.</div>
+              <button className="secondary-btn" onClick={reset}>
+                TRY AGAIN
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
