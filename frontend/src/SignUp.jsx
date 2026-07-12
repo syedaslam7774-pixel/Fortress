@@ -5,7 +5,7 @@ import "./App.css";
 
 const API_BASE = "";
 
-export default function SignUp({ onBackToLogin }) {
+export default function SignUp({ onDone, onBackToLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -32,24 +32,18 @@ export default function SignUp({ onBackToLogin }) {
 
     setLoading(true);
     try {
+      // 1. Generate key pair + encrypt private key with password, entirely in-browser
       const { publicKey } = await createIdentity(username, password);
 
+      // 2. Only the public key is sent to the server
       const res = await fetch(`${API_BASE}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, publicKey }),
       });
 
-      const rawText = await res.text();
-      let body = {};
-      try {
-        body = JSON.parse(rawText);
-      } catch {
-        // Response wasn't JSON at all - show the raw text so we can see what happened
-        throw new Error(`Server returned non-JSON response: ${rawText.slice(0, 200)}`);
-      }
-
       if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || "Registration failed.");
       }
 
