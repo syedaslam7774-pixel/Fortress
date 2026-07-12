@@ -32,29 +32,28 @@ export default function SignUp({ onDone, onBackToLogin }) {
 
     setLoading(true);
     try {
-      // 1. Generate key pair + encrypt private key with password, entirely in-browser
+      // 1. Generate key pair + encrypt private key with password, entirely in-browser.
+      //    The private key never leaves this device — only the public key is sent below.
       const { publicKey } = await createIdentity(username, password);
 
-      // 2. Only the public key is sent to the server
+      // 2. Send email + password + public key to the server.
       const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: username, password }),
+        body: JSON.stringify({ email: username, password, public_key: publicKey }),
       });
 
       if (!res.ok) {
-       {
-  const body = await res.json().catch(() => ({}));
-  let message = "Failed to create account.";
-  if (typeof body.detail === "string") {
-    message = body.detail;
-  } else if (Array.isArray(body.detail)) {
-    message = body.detail.map((d) => d.msg).join(" ");
-  } else if (typeof body.error === "string") {
-    message = body.error;
-  }
-  throw new Error(message);
-}
+        const body = await res.json().catch(() => ({}));
+        let message = "Failed to create account.";
+        if (typeof body.detail === "string") {
+          message = body.detail;
+        } else if (Array.isArray(body.detail)) {
+          message = body.detail.map((d) => d.msg).join(" ");
+        } else if (typeof body.error === "string") {
+          message = body.error;
+        }
+        throw new Error(message);
       }
 
       setCreated(true);
@@ -91,7 +90,8 @@ export default function SignUp({ onDone, onBackToLogin }) {
               <div className="result-title text-green">YOUR ACCOUNT IS CREATED</div>
               <div className="result-sub">
                 Your private key is encrypted and stored only on this device.
-                It never leaves your browser.
+                It never leaves your browser. Logging in from a different
+                device or browser will require creating a new identity there.
               </div>
               <button className="secondary-btn" onClick={onBackToLogin}>
                 GO TO LOGIN

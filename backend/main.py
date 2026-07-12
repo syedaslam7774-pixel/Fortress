@@ -1,3 +1,4 @@
+
 """
 ================================================================================
  FORTRESS API — single-file backend (FastAPI + Supabase)
@@ -829,3 +830,5 @@ create table if not exists audit_logs (
 create index if not exists idx_sessions_user_id on sessions(user_id);
 create index if not exists idx_audit_logs_user_id on audit_logs(user_id);
 """
+
+
