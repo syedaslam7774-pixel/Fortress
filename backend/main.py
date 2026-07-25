@@ -2,7 +2,8 @@ import base64
 import os
 import time
 import hashlib
-from fastapi import FastAPI, HTTPException
+import secrets
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from ecdsa import VerifyingKey, NIST256p, BadSignatureError
@@ -17,12 +18,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- In-memory storage (swap for a real database in production) ---
+# ============================================================
+# In-memory storage (swap for a real database in production)
 # We only ever store the PUBLIC key. Passwords and private keys never reach this server.
-users = {}          # username -> public key bytes
-challenges = {}     # username -> {"value": str, "expires": timestamp}
+# ============================================================
+users = {}           # username -> public key bytes
+challenges = {}      # username -> {"value": str, "expires": timestamp}
+sessions = {}        # session_token -> {"username": str, "expires": timestamp}
+transfer_chain = []  # append-only list of hash-chained transfer blocks
 
 CHALLENGE_TTL_SECONDS = 60
+SESSION_TTL_SECONDS = 3600  # 1 hour
+GENESIS_HASH = "0" * 64
 
 
 class RegisterRequest(BaseModel):
@@ -35,6 +42,14 @@ class LoginVerifyRequest(BaseModel):
     signature: str  # base64-encoded ECDSA signature over the challenge string
 
 
+class TransferRequest(BaseModel):
+    recipient: str
+    payload: str  # base64-encoded data. Encrypt this client-side first if confidentiality is required.
+
+
+# ============================================================
+# Registration / login (passkey-style challenge-response)
+# ============================================================
 @app.post("/api/register")
 def register(data: RegisterRequest):
     if data.username in users:
@@ -76,9 +91,94 @@ def login_verify(data: LoginVerifyRequest):
         raise HTTPException(status_code=401, detail="Signature verification failed.")
 
     del challenges[data.username]  # one-time use
-    return {"success": True, "message": "Login successful."}
+
+    # Issue a session token so the client can prove "logged in" on later requests.
+    session_token = secrets.token_urlsafe(32)
+    sessions[session_token] = {"username": data.username, "expires": time.time() + SESSION_TTL_SECONDS}
+
+    return {"success": True, "message": "Login successful.", "sessionToken": session_token}
+
+
+# ============================================================
+# Session auth dependency
+# ============================================================
+def get_current_user(authorization: str = Header(None)) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.removeprefix("Bearer ")
+    record = sessions.get(token)
+    if not record or time.time() > record["expires"]:
+        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
+    return record["username"]
+
+
+# ============================================================
+# Hash-chained transfer log
+# Each block links to the previous block's hash, so editing any past
+# block breaks every hash after it — the log becomes tamper-evident
+# without needing a distributed blockchain network.
+# We store only a hash of the payload, never the payload itself, so
+# the log doesn't become a second copy of sensitive data.
+# ============================================================
+def _chain_hash(index, timestamp, sender, recipient, payload_hash, previous_hash) -> str:
+    block_string = f"{index}|{timestamp}|{sender}|{recipient}|{payload_hash}|{previous_hash}"
+    return hashlib.sha256(block_string.encode()).hexdigest()
+
+
+@app.post("/api/transfer")
+def transfer_data(data: TransferRequest, username: str = Depends(get_current_user)):
+    if data.recipient not in users:
+        raise HTTPException(status_code=404, detail="Recipient does not exist.")
+
+    try:
+        payload_bytes = base64.b64decode(data.payload)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Payload must be valid base64.")
+
+    payload_hash = hashlib.sha256(payload_bytes).hexdigest()
+    index = len(transfer_chain)
+    timestamp = time.time()
+    previous_hash = transfer_chain[-1]["block_hash"] if transfer_chain else GENESIS_HASH
+
+    block_hash = _chain_hash(index, timestamp, username, data.recipient, payload_hash, previous_hash)
+
+    block = {
+        "index": index,
+        "timestamp": timestamp,
+        "sender": username,
+        "recipient": data.recipient,
+        "payload_hash": payload_hash,
+        "previous_hash": previous_hash,
+        "block_hash": block_hash,
+    }
+    transfer_chain.append(block)
+
+    return {"success": True, "block": block}
+
+
+@app.get("/api/chain")
+def get_chain(username: str = Depends(get_current_user)):
+    return {"chain": transfer_chain, "length": len(transfer_chain)}
+
+
+@app.get("/api/chain/verify")
+def verify_chain(username: str = Depends(get_current_user)):
+    previous_hash = GENESIS_HASH
+    for block in transfer_chain:
+        expected_hash = _chain_hash(
+            block["index"], block["timestamp"], block["sender"],
+            block["recipient"], block["payload_hash"], previous_hash
+        )
+        if block["previous_hash"] != previous_hash or block["block_hash"] != expected_hash:
+            return {"valid": False, "brokenAtIndex": block["index"]}
+        previous_hash = block["block_hash"]
+    return {"valid": True, "blocks": len(transfer_chain)}
 
 
 @app.get("/")
 def root():
-    return {"status": "Fortress backend running", "users_registered": len(users)}
+    return {
+        "status": "Fortress backend running",
+        "users_registered": len(users),
+        "transfer_blocks": len(transfer_chain),
+    }
